@@ -1,0 +1,419 @@
+---
+title: "Estimación del IMAE"
+author: "Daniel Vásquez"
+#date: "2024-02-16"
+output: html_document
+lang: es-ES
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Modelos ARIMA(p,d,q)
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+library(forecast)
+library(quantmod)
+library(TSA)
+library(tseries)  
+library(urca)
+library(lmtest)
+library(readxl)
+library(tsoutliers) #para tratar los datos atípicos
+
+data_excel <- read_xlsx("imae_variacion_acumulada.xlsx")
+#datos completos
+data_imae <- ts(data_excel$IMAE, start = c(2001,01), frequency = 12)
+
+#tomando la serie desde enero 2000 hasta diciembre 2022
+imae <- ts(data_excel$IMAE, start = c(2001, 01), end = c(2022,12), frequency = 12)
+```
+
+```{r, echo=FALSE}
+#Funcion para simplificar la creacion del modelo
+coef_arima <- function(data, p,d,q){
+  modelo <- arima(data, order = c(p,d,q))
+  # Coeficientes: 
+  print(modelo)
+  # Test de Coeficientes:
+  print(coeftest(modelo))
+  #print(modelo$aic)
+
+}
+
+# search_arima <- function(data, vect_rezago, d){
+#   for (i in vect_rezago) {
+#     for (j in vect_rezago) {
+#       modelo <- arima(data, order = c(i,d,j))
+#       aic <- modelo$aic
+#       p <- i
+#       q <- j
+#       if (modelo$aic < aic) {
+#         p <- i
+#         q <- j
+#         
+#       }
+#     }
+#   }
+# }
+
+#Función para graficar datos originales vs el arima
+graficar <- function(data1, data2,modelo){
+  plot(data1, 
+     main = "Serie Original vs Ajuste ARIMA",
+     xlab = "Años", ylab = "IMAE", lwd = 1)
+  lines(data2, col= "blue", lwd = 1)
+  lines(fitted.values(modelo), col = "red", lwd = 1)
+}
+
+#Función para graficar los pronósticos
+graficarPred <- function(data1, data2, modelo, prediccion){
+  #construyendo los intervalos de confianza:
+  v.critic <- qnorm(0.975) # valor critico al 95%
+  lim_inf <- prediccion$pred - v.critic*prediccion$se
+  lim_sup <- prediccion$pred + v.critic*prediccion$se
+
+  
+  plot(data1, 
+     main = "Serie Original vs Ajuste ARIMA",
+     xlab = "Años", ylab = "IMAE", lwd = 1)
+  lines(data2, col = "blue", lwd = 1)
+  lines(fitted.values(modelo), col = "red", lwd = 1)
+  lines(prediccion$pred, col= "orange", lwd = 2)
+  lines(lim_inf, col = "green4", lwd = 2)
+  lines(lim_sup, col = "green4", lwd = 2)
+  legend("bottomleft", legend = c("Original", "Entrenamiento", "Ajuste ARIMA", "Predicciones", "IC95%"),
+         col = c("black", "blue", "red", "orange","green4"), lty = c(1,1,1,1,1), lwd = 2)
+}
+
+```
+
+Grafico de la serie temporal IMAE - variación acumulada:
+```{r}
+plot(imae, main = "Serie Variación Acumulada - IMAE", lwd = 1,
+     xlab = "Años", ylab = "IMAE")
+```
+
+Necesitamos verificar si la serie es estacionaria o no, para esto, aplicamos la prueba de Dickey-Fuller:
+```{r, echo=FALSE}
+# adf.test(imae) # Dickey-Fuller por defecto
+
+# El resultado de la prueba nos indica que al incluir 6 rezagos, los datos muestran estacionariedad. 
+
+```
+
+
+Prueba Dickey-Fuller con intercepto:
+```{r}
+df1 <- ur.df(imae, type = "drift", lags = 0)
+summary(df1) 
+```
+
+Prueba Dickey-Fuller sin intercepto y sin tendencia:
+```{r}
+df2 <- ur.df(imae, type = "none", lags = 0)
+summary(df2) 
+
+```
+
+Prueba Dickey-Fuller con tendencia e intercepto:
+```{r}
+df3 <- ur.df(imae, type = "trend", lags = 0)
+summary(df3)
+```
+Los resultados de estas pruebas nos indican que la serie es no estacionaria.
+
+Ya que los datos son no estacionarios, debemos diferenciar para encontrar el parámetro d.
+```{r}
+imae_diff <- diff(imae)
+
+```
+
+Una vez diferenciada, necesitamos comprobar si ya es estacionaria con el test Dickey-Fuller.
+```{r}
+adf.test(imae_diff) # Dickey-Fuller por defecto
+
+```
+
+Prueba Dickey-Fuller sin intercepto y sin tendencia:
+```{r}
+df <- ur.df(imae_diff, type = "none", lags = 0)
+summary(df) 
+
+```
+El resultado de la pruebas nos indican estacionariedad. Por ende, bajo este análisis, se diría que la serie es integrada de orden 1 (d=1).
+
+
+Procedemos a examinar el ACF y PACF de la serie diferenciada:
+```{r}
+acf(imae_diff, main = "ACF de las diferencias", lag.max = 100)
+pacf(imae_diff, main = "PACF de las diferencias", lag.max = 100)
+```
+
+La PACF muestra significancia en los rezagos, 1, 2, 3 y 4, en el caso de la ACF, los rezagos 1 y 2 son significantes . Estos valores son los candidatos para los parámetros p y q. 
+
+
+### Encontrando el mejor modelo ARIMA:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# for (i in 0:4) {
+#   for (j in 0:4) {
+#     coef_arima(imae, i,1,j)
+#   }
+# }
+
+
+arima011 <- arima(imae, order = c(0,1,1))
+arima110 <- arima(imae, order = c(1,1,0))
+arima111 <- arima(imae, order = c(1,1,1))
+arima212 <- arima(imae, order = c(2,1,2))
+arima313 <- arima(imae, order = c(3,1,3))
+arima414 <- arima(imae, order = c(4,1,4))
+
+resid011 <- resid(arima011)
+resid110 <- resid(arima110)
+resid111 <- resid(arima111)
+resid212 <- resid(arima212)
+resid313 <- resid(arima313)
+resid414 <- resid(arima414)
+
+#Prueba Box-Ljung para descartar autocorrelación en los residuos
+Box.test(resid011, lag = 6, type = "Ljung")
+Box.test(resid110, lag = 6, type = "Ljung")
+Box.test(resid111, lag = 6, type = "Ljung")
+Box.test(resid212, lag = 6, type = "Ljung")
+Box.test(resid313, lag = 6, type = "Ljung")
+Box.test(resid414, lag = 6, type = "Ljung")
+
+#Todas las pruebas muestran que los residuos son ruido blanco
+
+### Error medio cuadrático y Error medio absoluto
+mse <- c(mean(arima011$residuals^2),
+          mean(arima110$residuals^2),
+          mean(arima111$residuals^2),
+          mean(arima212$residuals^2),
+          mean(arima313$residuals^2),
+          mean(arima414$residuals^2))
+
+mae <- c(mean(abs(resid011)),
+         mean(abs(resid110)),
+         mean(abs(resid111)),
+         mean(abs(resid212)),
+         mean(abs(resid313)),
+         mean(abs(resid414)))
+
+
+aic <- c(arima011$aic,
+         arima110$aic,
+         arima111$aic,
+         arima212$aic,
+         arima313$aic,
+         arima414$aic)
+
+model <- c("ARIMA(0,1,1)",
+           "ARIMA(1,1,0)",
+           "ARIMA(1,1,1)",
+           "ARIMA(2,1,2)",
+           "ARIMA(3,1,3)",
+           "ARIMA(4,1,4)")
+
+specs_arima <- data.frame(model,aic, mse,mae)
+```
+
+
+Luego de experimentar con los distintos parámetros, encontramos los siguientes modelos arima que resultaron con mayor grado de significancia en sus coeficientes:
+```{r}
+specs_arima
+```
+
+```{r, echo=FALSE}
+model_arima <- arima212
+prediccion <- predict(model_arima, n.ahead = 11)
+#construyendo los intervalos de confianza:
+v.critic <- qnorm(0.975) # valor critico al 95%
+lim_inf <- prediccion$pred - v.critic*prediccion$se
+lim_sup <- prediccion$pred + v.critic*prediccion$se
+
+#error de predicción
+error <- abs(prediccion$pred - data_imae[265:275])
+
+pronostico <- data.frame("Periodo" = data_excel$Periodo[265:275],
+                         "Observado" = data_imae[265:275], 
+                         "Prediccion" = prediccion$pred, 
+                         "Lim. Inf." = lim_inf,
+                         "Lim. Sup." = lim_sup,
+                         "Error" = error)
+```
+
+Podemos observar que la diferencia entre los modelos no es muy significativa, destacando un poco el ARIMA(2,1,2) y el ARIMA(4,1,4).
+
+Predicción para el último año:
+```{r}
+pronostico
+graficarPred(data_imae, imae, model_arima, prediccion)
+```
+
+
+## Modelo ARIMA eliminando datos atípicos de la serie
+
+Debido al mal ajuste de los modelos, vamos a tratar valores atípicos de los datos con el objetivo de mejorar los pronósticos.
+```{r}
+out_imae <- tso(data_imae, maxit.iloop = 10) #utiliza el enfoque Chen-Liu (1993) de datos atípicos en series de tiempo.
+plot(out_imae)
+```
+
+
+Grafico de la serie temporal ajustada (eliminando datos atípicos):
+```{r}
+imae_adj <- out_imae$yadj
+plot(imae_adj, main = "Serie Ajustada", lwd = 1,
+     xlab = "Años", ylab = "IMAE")
+#datos ajustados desde enero 2001 a diciembre 2022
+y_imae <- ts(imae_adj, start = c(2001, 01), end = c(2022,12), frequency = 12)
+```
+
+
+
+```{r, echo=FALSE}
+# Prueba de Dickey-Fuller:
+# adf.test(y_imae) # Dickey-Fuller por defecto
+
+# El resultado de la prueba nos indica que al incluir 6 rezagos, los datos muestran estacionariedad. 
+
+```
+
+
+Prueba Dickey-Fuller con intercepto:
+```{r}
+df1 <- ur.df(y_imae, type = "drift", lags = 0)
+summary(df1) 
+```
+
+Prueba Dickey-Fuller sin intercepto y sin tendencia:
+```{r}
+df2 <- ur.df(y_imae, type = "none", lags = 0)
+summary(df2) 
+
+```
+
+Prueba Dickey-Fuller con tendencia e intercepto:
+```{r}
+df3 <- ur.df(y_imae, type = "trend", lags = 0)
+summary(df3)
+```
+Las pruebas siguen indicando no estacionariedad.
+
+Diferenciando la serie:
+```{r}
+y_imae_diff <- diff(y_imae)
+
+```
+
+test Dickey-Fuller.
+```{r}
+adf.test(y_imae_diff) # Dickey-Fuller por defecto
+
+```
+
+Prueba Dickey-Fuller sin intercepto y sin tendencia:
+```{r}
+df <- ur.df(y_imae_diff, type = "none", lags = 0)
+summary(df) 
+
+```
+Las pruebas indican estacionariedad. Bajo este análisis, la serie es integrada de orden 1 (d=1).
+
+
+Procedemos a examinar el ACF y PACF de la serie diferenciada:
+```{r}
+acf(y_imae_diff, main = "ACF de las diferencias", lag.max = 100)
+pacf(y_imae_diff, main = "PACF de las diferencias", lag.max = 100)
+```
+
+La PACF y ACF muestran significancia en los rezagos 1 y 2. Estos serán los posibles valores de p y q.
+
+Encontrar el modelo arima adecuado:
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# for (i in 1:2) {
+#   for (j in 1:2) {
+#     coef_arima(y_imae, i,1,j)
+#   }
+# }
+
+arima210 <- arima(y_imae, order = c(2,1,0))
+arima012 <- arima(y_imae, order = c(0,1,2))
+arima111 <- arima(y_imae, order = c(1,1,1))
+arima112 <- arima(y_imae, order = c(1,1,2))
+
+
+resid210 <- resid(arima210)
+resid012 <- resid(arima012)
+resid111 <- resid(arima111)
+resid112 <- resid(arima112)
+
+#Prueba Box-Ljung para descartar autocorrelación en los residuos
+Box.test(resid210, lag = 6, type = "Ljung")
+Box.test(resid012, lag = 6, type = "Ljung")
+Box.test(resid111, lag = 6, type = "Ljung")
+Box.test(resid112, lag = 6, type = "Ljung")
+
+#Todas las pruebas muestran que los residuos son ruido blanco
+
+### Error medio cuadrático y Error medio absoluto
+mse <- c(mean(arima210$residuals^2),
+          mean(arima012$residuals^2),
+          mean(arima111$residuals^2),
+          mean(arima112$residuals^2))
+
+mae <- c(mean(abs(resid210)),
+         mean(abs(resid012)),
+         mean(abs(resid111)),
+         mean(abs(resid112)))
+
+
+aic <- c(arima210$aic,
+         arima012$aic,
+         arima111$aic,
+         arima112$aic)
+
+model <- c("ARIMA(2,1,0)",
+           "ARIMA(0,1,2)",
+           "ARIMA(1,1,1)",
+           "ARIMA(1,1,2)")
+
+specs_arima <- data.frame(model,aic, mse,mae)
+```
+
+
+Encontramos los siguientes modelos arima que resultaron con mayor grado de significancia en sus coeficientes:
+```{r}
+specs_arima
+```
+
+```{r, echo=FALSE}
+model_arima <- arima111
+prediccion <- predict(model_arima, n.ahead = 11)
+#construyendo los intervalos de confianza:
+v.critic <- qnorm(0.975) # valor critico al 95%
+lim_inf <- prediccion$pred - v.critic*prediccion$se
+lim_sup <- prediccion$pred + v.critic*prediccion$se
+
+#error de predicción
+error <- abs(prediccion$pred - imae_adj[265:275])
+
+pronostico <- data.frame("Periodo" = data_excel$Periodo[265:275],
+                         "Observado" = imae_adj[265:275], 
+                         "Prediccion" = prediccion$pred, 
+                         "Lim. Inf." = lim_inf,
+                         "Lim. Sup." = lim_sup,
+                         "Error" = error)
+```
+
+
+Predicción para el último año:
+```{r}
+pronostico
+graficarPred(imae_adj, y_imae, model_arima, prediccion)
+```
+

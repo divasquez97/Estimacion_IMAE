@@ -1,0 +1,142 @@
+---
+title: "Estimación IMAE"
+author: "Daniel Vásquez"
+date: "2024-03-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Modelo GARCH(p,q)
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+library(forecast)
+library(quantmod)
+library(TSA)
+library(tseries)  
+library(urca)
+library(lmtest)
+library(readxl)
+library(tsoutliers) #para tratar los datos atípicos
+# library(dynlm)
+# library(timeSeries)
+library(FinTS)     #aqui esta la prueba arch
+library(rugarch)
+#library(fGarch)
+
+data_excel <- read_xlsx("imae_variacion_acumulada.xlsx")
+#datos completos
+data_imae <- ts(data_excel$IMAE, start = c(2001,01), frequency = 12)
+
+#tomando la serie desde enero 2000 hasta diciembre 2022
+imae <- ts(data_excel$IMAE, start = c(2001, 01), end = c(2022,12), frequency = 12)
+
+```
+
+Anteriormente, hicimos el análisis correspondiente a la estimación del IMAE mediante un modelo ARIMA, el mejor modelo resultó ser un ARIMA(2,1,2). Ahora, asociaremos este a un modelo GARCH(1,1) con el que vamos a modelizar la volatilidad de nuestros datos.
+
+Resuduos al cuadrado de ARIMA(2,1,2):
+
+```{r}
+arima212 <- arima(imae, order = c(2,1,2))
+rescuad <- resid(arima212)^2
+plot(rescuad, main = "Residuos^2 ARIMA(2,1,2)", , xlab = "Años", ylab = "Residuos")
+```
+
+Ahora, necesitamos comprobar que hay un efecto ARCH, es decir, que la varianza es heterocedastica y depende de los residuos al cuadrado rezagados.
+
+Revisando la autocorrelacion de los residuos:
+```{r}
+acf(rescuad, main = "ACF residuos^2", lag.max = 100)
+pacf(rescuad, main = "PACF residuos^2", lag.max = 100)
+```
+
+Las ACF y PACF muestran que el primer rezago es significativo, esto podría sugerir que hay efecto ARCH al primer rezago. 
+```{r}
+#Prueba de efecto ARCH
+ArchTest(imae, lags = 1)
+```
+
+La prueba corrobara que si tenemos efecto ARCH en nuestros datos. Teniendo en consideración esto, procederemos a especificar un modelo GARCH y verificar la significancia de sus coeficientes.
+
+```{r}
+# Especificando el modelo GARCH asociando un ARIMA(2,1,2)
+spec_garch <- ugarchspec(mean.model = list(armaOrder = c(2,2), 
+                                        arfima = TRUE), 
+                      fixed.pars = list(arfima = 1))
+#Estimando el modelo GARCH
+fit_garch <- ugarchfit(spec = spec_garch, data = imae)
+#Significancia de los coeficientes:
+fit_garch@fit$matcoef
+```
+
+Capacidad predictiva del modelo:
+```{r}
+
+residuos_garch <- fit_garch@fit$residuals
+
+#MAE
+mae_garch <- mean(abs(fit_garch@fit$fitted.values - imae))
+mae_garch
+
+#MSE
+mse_garch <- mean(residuos_garch^2)
+mse_garch
+```
+
+Pronósticos del modelo ARIMA(2,1,2) + GARCH(1,1):
+```{r, echo=FALSE}
+garch_forecast <- ugarchforecast(fit_garch, n.ahead = 11)
+
+#Calcular los errores, error = |x^ - x|
+error_garch <- abs(garch_forecast@forecast$seriesFor - data_imae[265:275])
+
+#construyendo los intervalos de confianza:
+v.critic <- qnorm(0.975) # valor critico al 95%
+lim_inf <- garch_forecast@forecast$seriesFor - v.critic*garch_forecast@forecast$sigmaFor
+lim_sup <- garch_forecast@forecast$seriesFor + v.critic*garch_forecast@forecast$sigmaFor
+
+ ### esto es solo para graficar y tabular:
+#Guardando los valores estimados del modelo para poder
+# graficarlos de forma adecuada
+fittedvalues_garch <- ts(fit_garch@fit$fitted.values, 
+                         start = c(2001,01), frequency = 12)
+#lo mismo para los valores pronosticados
+pronost_garch <- ts(garch_forecast@forecast$seriesFor, 
+                    start = c(2023,01), frequency = 12)
+
+lim_inf_garch <- ts(lim_inf, start = c(2023,01), frequency = 12)
+lim_sup_garch <- ts(lim_sup, start = c(2023,01), frequency = 12)
+errores <- ts(error_garch, start = c(2023,01), frequency = 12)
+
+#lo anterior solamente lo necesito para graficar
+# la serie original vs la del modelo bien indexada 
+
+
+pronosticos <- data.frame("Periodo" = data_excel$Periodo[265:275],
+                         "Observado" = data_imae[265:275], 
+                         "Prediccion" = garch_forecast@forecast$seriesFor, 
+                         "Lim. Inf." = lim_inf,
+                         "Lim. Sup." = lim_sup,
+                         "Error" = error_garch)
+
+```
+
+```{r}
+pronosticos
+
+plot(data_imae, main = "Serie original vs GARCH", 
+     type = "l", xlab = "Años", ylab = "IMAE" , lwd = 1)
+lines(imae, col = "blue", lwd = 1)
+lines(fittedvalues_garch, col = "red", lwd = 1)
+lines(pronost_garch, col = "orange", lwd = 1)
+lines(lim_inf_garch, col = "green4", lwd = 1)
+lines(lim_sup_garch, col = "green4", lwd = 1)
+legend("bottomleft", legend = c("Original", "Entrenamiento", "Ajuste GARCH", "Predicciones", "IC95%"),
+         col = c("black", "blue", "red", "orange","green4"), lty = c(1,1,1,1,1), lwd = 2)
+
+```
+
+
+
