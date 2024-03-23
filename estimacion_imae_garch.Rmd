@@ -18,9 +18,6 @@ library(tseries)
 library(urca)
 library(lmtest)
 library(readxl)
-library(tsoutliers) #para tratar los datos atípicos
-# library(dynlm)
-# library(timeSeries)
 library(FinTS)     #aqui esta la prueba arch
 library(rugarch)
 #library(fGarch)
@@ -36,12 +33,12 @@ imae <- ts(data_excel$IMAE, start = c(2001, 01), end = c(2022,12), frequency = 1
 
 Anteriormente, hicimos el análisis correspondiente a la estimación del IMAE mediante un modelo ARIMA, el mejor modelo resultó ser un ARIMA(2,1,2). Ahora, asociaremos este a un modelo GARCH(1,1) con el que vamos a modelizar la volatilidad de nuestros datos.
 
-Resuduos al cuadrado de ARIMA(2,1,2):
+Residuos al cuadrado de ARIMA(2,1,2):
 
 ```{r}
-arima212 <- arima(imae, order = c(2,1,2))
+arima212 <- Arima(imae, order = c(2,1,2))
 rescuad <- resid(arima212)^2
-plot(rescuad, main = "Residuos^2 ARIMA(2,1,2)", , xlab = "Años", ylab = "Residuos")
+plot(rescuad, main = "Residuos^2 ARIMA(2,1,2)", , xlab = "Años", ylab = "Residuos", col = "blue4")
 ```
 
 Ahora, necesitamos comprobar que hay un efecto ARCH, es decir, que la varianza es heterocedastica y depende de los residuos al cuadrado rezagados.
@@ -52,13 +49,16 @@ acf(rescuad, main = "ACF residuos^2", lag.max = 100)
 pacf(rescuad, main = "PACF residuos^2", lag.max = 100)
 ```
 
-Las ACF y PACF muestran que el primer rezago es significativo, esto podría sugerir que hay efecto ARCH al primer rezago. 
+Las ACF y PACF no parecen mostrar dependencia entre los residuos al cuadrado.
 ```{r}
 #Prueba de efecto ARCH
-ArchTest(imae, lags = 1)
+#ArchTest(imae, lags = 1)
+ArchTest(resid(arima212))
 ```
 
-La prueba corrobara que si tenemos efecto ARCH en nuestros datos. Teniendo en consideración esto, procederemos a especificar un modelo GARCH y verificar la significancia de sus coeficientes.
+La prueba muestra que hay efecto arch hasta el lag 12.
+
+## Ajuste del modelo GARCH
 
 ```{r}
 # Especificando el modelo GARCH asociando un ARIMA(2,1,2)
@@ -116,11 +116,10 @@ errores <- ts(error_garch, start = c(2023,01), frequency = 12)
 
 pronosticos <- data.frame("Periodo" = data_excel$Periodo[265:275],
                          "Observado" = data_imae[265:275], 
-                         "Prediccion" = garch_forecast@forecast$seriesFor, 
-                         "Lim. Inf." = lim_inf,
-                         "Lim. Sup." = lim_sup,
-                         "Error" = error_garch)
-
+                         "Prediccion" = as.numeric(garch_forecast@forecast$seriesFor), 
+                         "Lim. Inf." = as.numeric(lim_inf),
+                         "Lim. Sup." = as.numeric(lim_sup),
+                         "Error" = as.numeric(error_garch))
 ```
 
 ```{r}
@@ -128,13 +127,12 @@ pronosticos
 
 plot(data_imae, main = "Serie original vs GARCH", 
      type = "l", xlab = "Años", ylab = "IMAE" , lwd = 1)
-lines(imae, col = "blue", lwd = 1)
 lines(fittedvalues_garch, col = "red", lwd = 1)
 lines(pronost_garch, col = "orange", lwd = 1)
 lines(lim_inf_garch, col = "green4", lwd = 1)
 lines(lim_sup_garch, col = "green4", lwd = 1)
-legend("bottomleft", legend = c("Original", "Entrenamiento", "Ajuste GARCH", "Predicciones", "IC95%"),
-         col = c("black", "blue", "red", "orange","green4"), lty = c(1,1,1,1,1), lwd = 2)
+legend("bottomleft", legend = c("Original", "Ajuste GARCH", "Predicciones", "IC95%"),
+         col = c("black", "red", "orange","green4"), lty = c(1,1,1,1), lwd = 2)
 
 ```
 

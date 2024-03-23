@@ -1,5 +1,6 @@
 library(forecast)
 library(quantmod)
+library(ggplot2)
 library(TSA)
 library(tseries)  
 library(urca)   ## aquí esta el test de dickey-fuller
@@ -17,9 +18,20 @@ imae_ts <- ts(imae, start = c(2001, 01), frequency = 12)
 #Grafica del IMAE
 plot(imae_ts, main = "Serie Variación Acumulada - IMAE", lwd = 1,
      xlab = "Años", ylab = "IMAE")
+ggplot(imae_ts, aes(x = data_excel$Periodo, y = data_excel$IMAE)) +
+  geom_line(color = "blue4") +
+  labs(title = "Serie Variación Acumulada - IMAE",
+       x = "Años",
+       y = "IMAE")
+
 
 
 # prueba de raiz unitaria Dickey-Fuller
+
+# adf.test(imae) # Dickey-Fuller por defecto
+# El resultado de la prueba nos indica que al incluir 6 rezagos, 
+# los datos muestran estacionariedad. 
+
 
 # H_0: No hay estacionariedad || Hay raíz unitaria
 #H_a: Hay estacionariedad     || No hay raiz unitaria
@@ -64,8 +76,9 @@ diff_df <- ur.df(imae_diff, type = "none", lags = 0)
 summary(diff_df) # la serie diferenciada es estacionaria
 
 #acf a la serie differenciada
-acf(imae_diff, main = "ACF de serie diferenciada", lag.max = 50)
-pacf(imae_diff, main = "PACF de serie diferenciada", lag.max = 50)
+par(mfrow = c(1, 2))
+acf(imae_diff, main = "ACF de la serie en diferencias", lag.max = 100)
+pacf(imae_diff, main = "PACF de la serie en diferencias", lag.max = 100)
 
 
 # crear modelo arima 1 0 1 :
@@ -121,7 +134,7 @@ plot(resid212)
 imae_truncado <- ts(imae, start = c(2001,1), end = c(2022,12), frequency = 12)
 plot(imae_truncado)
 
-arima212_truncado <- arima(imae_truncado, order = c(2,1,2))
+arima212_truncado <- Arima(imae_truncado, order = c(2,1,2))
 arima212_truncado
 coeftest(arima212_truncado)
 
@@ -145,7 +158,7 @@ Box.test(resid212, lag = 6, type = "Ljung") # m ~ Ln(264), Q(6)
 #segun la prueba realizada, no hay dependencia entre los resid
 
 #pronóstico para 24 meses == 2 años
-pred212_truncado <- predict(arima212_truncado, n.ahead = 24)
+pred212_truncado <- forecast(arima212_truncado, h = 11, level = 95)
 pred212_truncado
 
 #construyendo los intervalos de confianza:
@@ -160,12 +173,16 @@ pronostico <- data.frame("fecha" = time(pred212_truncado$pred),
 pronostico
 
 #graficando serie original vs modelo
-plot(imae_ts, lwd = 1)
-lines(imae_truncado, col = "blue", lwd = 2)
-lines(fitted.values(arima212_truncado), col = "red", lwd = 1)
-lines(pred212_truncado$pred, col= "red", lwd = 1)
-lines(lim_inf, col = "brown", lwd = 2)
-lines(lim_sup, col = "brown", lwd = 2)
+plot(pred212_truncado, main = "Serie Original vs Ajuste ARIMA", 
+     xlab = "Años", ylab = "IMAE" )
+grid(nx = NULL, ny = NULL,
+     lty = 2, col = "gray", lwd = 1)
+lines(imae_ts)
+lines(arima212_truncado$fitted, col = "red")
+legend("bottomleft", 
+       legend = c("Serie original", "Ajuste ARIMA", "Predicciones"),
+       col = c("black", "red", "cyan3"), 
+       lty = c(1,1,1), lwd = 2)
 
 #Vamos a calcular el error de mis datos estimados de 2023
 # con los reales, es decir, error = | x^ - x |:

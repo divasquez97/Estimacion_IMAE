@@ -43,12 +43,16 @@ lines(pred212$pred, col = "brown", type = "l", lwd = 2)
 
 #residuos al cuadrado del modelo arima(212)
 rescuad212 <- resid(arima212)^2
-chartSeries(rescuad212)
+# chartSeries(rescuad212, 
+#             theme = chartTheme("white"))
+plot(rescuad212, main = "Residuos^2 ARIMA(2,1,2)", 
+     xlab = "Años", ylab = "Residuos", col = "blue4")
+
+
 
 #revisando la autocorrelacion de los residuos
-acf(rescuad212, main = "ACF residuos^2", lag.max = 50)
-pacf(rescuad212, main = "PACF residuos^2", lag.max = 50)
-
+acf(rescuad212, main = "ACF residuos^2", lag.max = 100)
+pacf(rescuad212, main = "PACF residuos^2", lag.max = 100)
 
 #Prueba de efecto ARCH con un rezago para mis datos IMAE
 ArchTest(imae_ts, lags = 1, demean = TRUE) # la prueba dice que hay efecto arch
@@ -62,11 +66,13 @@ mlgarch
 
 #estimar el modelo garch
 fit_garch <- ugarchfit(spec = mlgarch, data = imae_truncado)
-fit_garch
+fit_garch@fit$coef
 
 #pronosticos del modelo para 24 meses == 2 años
-garch_forecast <- ugarchforecast(fit_garch, n.ahead = 24)
+garch_forecast <- ugarchforecast(fit_garch, n.ahead = 11)
 garch_forecast
+
+plot(garch_forecast)
 
 #Calcular los errores, error = |x^ - x|
 data23 <- imae[265:275]
@@ -173,8 +179,6 @@ lines(garch_var, col = "green")
 garch_forecast <- ugarchforecast(fit_garch, n.head = 12)
 garch_forecast
 
-?ugarchspec
-?ugarchfit
 
 plot(fit_garch)
 plot(garch_forecast)
